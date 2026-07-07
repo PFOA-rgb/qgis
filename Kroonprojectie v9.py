@@ -59,7 +59,7 @@ class KroonprojectieV31Algorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterFeatureSource(self.INPUT, self.tr('Selecteer de bomenlaag'), [QgsProcessing.TypeVectorPoint]))
         self.addParameter(QgsProcessingParameterField(self.FIELD, self.tr('Selecteer veld met kroondiameter'), parentLayerParameterName=self.INPUT, defaultValue='Kroondiameter'))
-        self.addParameter(QgsProcessingParameterBoolean(self.SHOW_INDICATOR, self.tr('Toon straal-indicator op de kaart'), defaultValue=True))
+        self.addParameter(QgsProcessingParameterBoolean(self.SHOW_INDICATOR, self.tr('Toon straal-indicator op de kaart'), defaultValue=False))
         
         self.addParameter(
             QgsProcessingParameterEnum(
