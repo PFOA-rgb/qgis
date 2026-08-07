@@ -8,8 +8,11 @@ from qgis.core import (
     QgsProcessingFeedback,
     QgsProcessingParameterFile,
     QgsProcessingParameterFileDestination,
+    QgsFeature,
+    QgsField,
     QgsVectorLayer,
     QgsVectorFileWriter,
+    QgsWkbTypes,
     QgsProject,
     QgsMarkerSymbol,
     QgsSingleSymbolRenderer,
@@ -80,7 +83,46 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             feedback.reportError("Could not load the GeoJSON file!")
             return {self.OUTPUT_GPKG: output_path}
 
-        # 2. Setup Save Options
+        # 2. Rename source field "fid" before GeoPackage export.
+        # GeoPackage/OGR reserves fid for its internal numeric feature id.
+        export_layer = vlayer
+        field_names = vlayer.fields().names()
+        fid_indexes = [i for i, name in enumerate(field_names) if name.lower() == "fid"]
+        if fid_indexes:
+            existing_names = {name.lower() for name in field_names}
+            safe_fid_name = "bron_fid"
+            counter = 1
+            while safe_fid_name.lower() in existing_names:
+                safe_fid_name = f"bron_fid_{counter}"
+                counter += 1
+
+            export_layer = QgsVectorLayer(
+                f"{QgsWkbTypes.displayString(vlayer.wkbType())}?crs={vlayer.crs().authid()}",
+                "Temp_Import_Safe_Fields",
+                "memory"
+            )
+            provider = export_layer.dataProvider()
+
+            safe_fields = []
+            for index, field in enumerate(vlayer.fields()):
+                new_field = QgsField(field)
+                if index in fid_indexes:
+                    new_field.setName(safe_fid_name)
+                safe_fields.append(new_field)
+
+            provider.addAttributes(safe_fields)
+            export_layer.updateFields()
+
+            new_features = []
+            for feature in vlayer.getFeatures():
+                new_feature = QgsFeature(export_layer.fields())
+                new_feature.setGeometry(feature.geometry())
+                new_feature.setAttributes(feature.attributes())
+                new_features.append(new_feature)
+            provider.addFeatures(new_features)
+            feedback.pushInfo(f'Veld "fid" hernoemd naar "{safe_fid_name}" om GeoPackage-export mogelijk te maken.')
+
+        # 3. Setup Save Options
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "GPKG"
         options.layerName = "Bomen" 
@@ -88,9 +130,9 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
         
         transform_context = QgsProject.instance().transformContext()
         
-        # 3. Write Permanent GeoPackage
+        # 4. Write Permanent GeoPackage
         error_code, error_msg, _, _ = QgsVectorFileWriter.writeAsVectorFormatV3(
-            vlayer, output_path, transform_context, options
+            export_layer, output_path, transform_context, options
         )
 
         if error_code == QgsVectorFileWriter.NoError:
