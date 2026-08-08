@@ -13,6 +13,8 @@ from qgis.core import (
     QgsFeature,
     QgsCoordinateReferenceSystem,
     QgsField,
+    QgsGeometry,
+    QgsPointXY,
     QgsVectorLayer,
     QgsVectorFileWriter,
     QgsWkbTypes,
@@ -28,7 +30,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtGui import QColor
 
-SCRIPT_VERSION = "1.5"
+SCRIPT_VERSION = "1.6"
 
 
 def parse_coordinate_value(value):
@@ -146,6 +148,10 @@ def create_normalized_geojson(input_path, feedback):
     return temp_file.name, temp_file.name
 
 
+def value_in_rd_range(x, y):
+    return isinstance(x, (int, float)) and isinstance(y, (int, float)) and 0 <= x <= 300000 and 300000 <= y <= 620000
+
+
 def layer_looks_like_rd(layer):
     extent = layer.extent()
     if extent.isEmpty():
@@ -153,7 +159,49 @@ def layer_looks_like_rd(layer):
 
     center_x = (extent.xMinimum() + extent.xMaximum()) / 2
     center_y = (extent.yMinimum() + extent.yMaximum()) / 2
-    return 0 <= center_x <= 300000 and 300000 <= center_y <= 620000
+    return value_in_rd_range(center_x, center_y)
+
+
+def rebuild_point_layer_from_xy(layer, feedback):
+    field_names = layer.fields().names()
+    lower_names = [name.lower() for name in field_names]
+    if "x" not in lower_names or "y" not in lower_names:
+        return layer
+
+    x_index = lower_names.index("x")
+    y_index = lower_names.index("y")
+    rebuilt_layer = QgsVectorLayer("Point?crs=EPSG:28992", "Temp_Import_RD_XY", "memory")
+    provider = rebuilt_layer.dataProvider()
+    provider.addAttributes(layer.fields())
+    rebuilt_layer.updateFields()
+
+    rebuilt_features = []
+    skipped = 0
+    for feature in layer.getFeatures():
+        attributes = feature.attributes()
+        x, y, changed = normalize_rd_coordinate_pair(attributes[x_index], attributes[y_index])
+        if not value_in_rd_range(x, y):
+            skipped += 1
+            continue
+
+        attributes[x_index] = x
+        attributes[y_index] = y
+
+        new_feature = QgsFeature(rebuilt_layer.fields())
+        new_feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+        new_feature.setAttributes(attributes)
+        rebuilt_features.append(new_feature)
+
+    if not rebuilt_features:
+        feedback.reportError("X/Y-velden gevonden, maar geen geldige RD-coördinaten kunnen maken. Originele geometrie wordt gebruikt.")
+        return layer
+
+    provider.addFeatures(rebuilt_features)
+    rebuilt_layer.updateExtents()
+    feedback.pushInfo(f"Puntgeometrie opnieuw opgebouwd uit X/Y-velden voor {len(rebuilt_features)} objecten.")
+    if skipped:
+        feedback.reportError(f"{skipped} objecten overgeslagen door ongeldige X/Y-coördinaten.")
+    return rebuilt_layer
 
 
 class BomenConverterAlgorithm(QgsProcessingAlgorithm):
@@ -161,7 +209,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_GPKG = "OUTPUT_GPKG"
 
     def name(self) -> str:
-        return "importeer_geojson_v15"
+        return "importeer_geojson_v16"
 
     def displayName(self) -> str:
         return f"Importeer GeoJSON v{SCRIPT_VERSION}"
@@ -178,6 +226,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             "Converteert GeoJSON naar GeoPackage.\n"
             "Normaliseert coördinaatnotatie zoals 99,659.286 en 99659,286.\n"
             "Schaalt opgeblazen RD-coördinaten zoals 996660581 terug naar 99666.0581.\n"
+            "Bouwt puntgeometrie opnieuw op uit X/Y-velden als die aanwezig zijn.\n"
             "Herkent RD-coördinaten en zet CRS op EPSG:28992.\n"
             "Hernoemt een bronveld fid naar bron_fid om GeoPackage-conflicten te voorkomen."
         )
@@ -228,9 +277,13 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             feedback.reportError("Could not load the GeoJSON file!")
             return {self.OUTPUT_GPKG: output_path}
 
+        vlayer = rebuild_point_layer_from_xy(vlayer, feedback)
+
         if layer_looks_like_rd(vlayer):
             vlayer.setCrs(QgsCoordinateReferenceSystem("EPSG:28992"))
             feedback.pushInfo("Coördinaten lijken op RD New. CRS ingesteld op EPSG:28992 zonder transformatie.")
+        else:
+            feedback.reportError("Let op: laagextent lijkt niet op RD New. Controleer X/Y-waarden en laag-CRS na import.")
 
         # 3. Rename source field "fid" before GeoPackage export.
         # GeoPackage/OGR reserves fid for its internal numeric feature id.
