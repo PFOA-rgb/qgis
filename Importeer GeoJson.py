@@ -28,12 +28,12 @@ from qgis.core import (
 )
 from qgis.PyQt.QtGui import QColor
 
-SCRIPT_VERSION = "1.4"
+SCRIPT_VERSION = "1.5"
 
 
 def parse_coordinate_value(value):
     if isinstance(value, (int, float)):
-        return value, False
+        return float(value), False
     if not isinstance(value, str):
         return value, False
 
@@ -57,18 +57,44 @@ def parse_coordinate_value(value):
         return value, False
 
 
+def scale_to_rd_range(value, min_value, max_value):
+    if not isinstance(value, (int, float)):
+        return value, False
+
+    scaled = float(value)
+    changed = False
+    while scaled > max_value:
+        scaled /= 10
+        changed = True
+
+    return scaled, changed and min_value <= scaled <= max_value
+
+
+def normalize_rd_coordinate_pair(x_value, y_value):
+    x, x_changed = parse_coordinate_value(x_value)
+    y, y_changed = parse_coordinate_value(y_value)
+
+    x, x_scaled = scale_to_rd_range(x, 0, 300000)
+    y, y_scaled = scale_to_rd_range(y, 300000, 620000)
+
+    return x, y, x_changed or y_changed or x_scaled or y_scaled
+
+
 def normalize_geojson_coordinates(coordinates):
     if not isinstance(coordinates, list):
         return coordinates, 0
 
     if len(coordinates) >= 2 and not isinstance(coordinates[0], list) and not isinstance(coordinates[1], list):
-        normalized = []
-        changes = 0
-        for value in coordinates:
-            parsed, changed = parse_coordinate_value(value)
+        x, y, changed = normalize_rd_coordinate_pair(coordinates[0], coordinates[1])
+        normalized = [x, y]
+        changes = 2 if changed else 0
+
+        for value in coordinates[2:]:
+            parsed, value_changed = parse_coordinate_value(value)
             normalized.append(parsed)
-            if changed:
+            if value_changed:
                 changes += 1
+
         return normalized, changes
 
     normalized = []
@@ -91,10 +117,17 @@ def create_normalized_geojson(input_path, feedback):
     features = data.get("features", []) if isinstance(data, dict) else []
     for feature in features:
         geometry = feature.get("geometry") if isinstance(feature, dict) else None
-        if not geometry or "coordinates" not in geometry:
-            continue
-        geometry["coordinates"], changes = normalize_geojson_coordinates(geometry["coordinates"])
-        total_changes += changes
+        if geometry and "coordinates" in geometry:
+            geometry["coordinates"], changes = normalize_geojson_coordinates(geometry["coordinates"])
+            total_changes += changes
+
+        properties = feature.get("properties", {}) if isinstance(feature, dict) else {}
+        if isinstance(properties, dict) and "X" in properties and "Y" in properties:
+            x, y, changed = normalize_rd_coordinate_pair(properties["X"], properties["Y"])
+            if changed:
+                properties["X"] = x
+                properties["Y"] = y
+                total_changes += 2
 
     if total_changes == 0:
         return input_path, None
@@ -128,7 +161,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_GPKG = "OUTPUT_GPKG"
 
     def name(self) -> str:
-        return "importeer_geojson_v14"
+        return "importeer_geojson_v15"
 
     def displayName(self) -> str:
         return f"Importeer GeoJSON v{SCRIPT_VERSION}"
@@ -144,6 +177,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             f"Versie: {SCRIPT_VERSION}\n\n"
             "Converteert GeoJSON naar GeoPackage.\n"
             "Normaliseert coördinaatnotatie zoals 99,659.286 en 99659,286.\n"
+            "Schaalt opgeblazen RD-coördinaten zoals 996660581 terug naar 99666.0581.\n"
             "Herkent RD-coördinaten en zet CRS op EPSG:28992.\n"
             "Hernoemt een bronveld fid naar bron_fid om GeoPackage-conflicten te voorkomen."
         )
