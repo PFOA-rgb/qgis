@@ -15,6 +15,8 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QCoreApplication, QVariant, Qt
 from qgis.PyQt.QtGui import QColor
 
+SCRIPT_VERSION = '1.1'
+
 class KroonprojectieV31Algorithm(QgsProcessingAlgorithm):
 
     INPUT = 'INPUT'
@@ -32,10 +34,10 @@ class KroonprojectieV31Algorithm(QgsProcessingAlgorithm):
         return KroonprojectieV31Algorithm()
 
     def name(self):
-        return 'kroonprojectie_v31_final'
+        return 'kroonprojectie_v32_final'
 
     def displayName(self):
-        return self.tr('Kroonprojectie')
+        return self.tr(f'Kroonprojectie v{SCRIPT_VERSION}')
 
     def group(self):
         return self.tr('')
@@ -45,6 +47,7 @@ class KroonprojectieV31Algorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
+            f"Versie: {SCRIPT_VERSION}\n\n"
             "### REFERENTIE TABEL\n"
             "De straal van de cirkel is de helft van de diameter ($radius = diameter / 2$):\n\n"
             "| Diameter Boom | Straal (Buffer) |\n"
@@ -75,6 +78,7 @@ class KroonprojectieV31Algorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFileDestination(self.OUTPUT_FILE, self.tr('Opslaglocatie (Leeg = Auto-Save)'), fileFilter='GeoPackage (*.gpkg)', optional=True))
 
     def processAlgorithm(self, parameters, context, feedback):
+        feedback.pushInfo(f"Kroonprojectie v{SCRIPT_VERSION} gestart.")
         input_layer = self.parameterAsVectorLayer(parameters, self.INPUT, context)
         if not input_layer: raise QgsProcessingException("Invoerlaag niet gevonden.")
         

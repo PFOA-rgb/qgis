@@ -13,6 +13,8 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QCoreApplication
 from qgis.PyQt.QtGui import QColor
 
+SCRIPT_VERSION = '1.0'
+
 class CreateRisicozoneAlgorithm(QgsProcessingAlgorithm):
 
     INPUT_LAYER = 'INPUT_LAYER'
@@ -33,10 +35,10 @@ class CreateRisicozoneAlgorithm(QgsProcessingAlgorithm):
         return CreateRisicozoneAlgorithm()
 
     def name(self):
-        return 'risicozone_clean_layer_v20'
+        return 'risicozone_clean_layer_v21'
 
     def displayName(self):
-        return self.tr('Risicozone')
+        return self.tr(f'Risicozone v{SCRIPT_VERSION}')
 
     def group(self):
         return self.tr('')
@@ -46,6 +48,7 @@ class CreateRisicozoneAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
+            f"Versie: {SCRIPT_VERSION}\n\n"
             "### REFERENTIE TABEL\n"
             "Onderstaande waarden gelden voor een boom van **60 cm**:\n\n"
             "| Factor | Diameter Zone |\n"
@@ -80,6 +83,7 @@ class CreateRisicozoneAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFileDestination(self.OUTPUT_FILE, self.tr('Opslaglocatie (Leeg = Auto-Save)'), fileFilter='GeoPackage (*.gpkg)', optional=True))
 
     def processAlgorithm(self, parameters, context, feedback):
+        feedback.pushInfo(f"Risicozone v{SCRIPT_VERSION} gestart.")
         bomen_layer = self.parameterAsVectorLayer(parameters, self.INPUT_LAYER, context)
         field_name = self.parameterAsString(parameters, self.FIELD, context).strip()
         factor = self.parameterAsDouble(parameters, self.FACTOR, context)

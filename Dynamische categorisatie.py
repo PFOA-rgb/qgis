@@ -22,6 +22,8 @@ from qgis.core import (
 from qgis.gui import QgsColorButton
 from qgis.PyQt.QtCore import QCoreApplication, Qt
 from qgis.PyQt.QtGui import QColor
+SCRIPT_VERSION = "2.0"
+
 from qgis.PyQt.QtWidgets import (
     QComboBox,
     QDialog,
@@ -299,16 +301,24 @@ class BoomstylerFinalAlgorithm(QgsProcessingAlgorithm):
         return BoomstylerFinalAlgorithm()
 
     def name(self):
-        return "boom_styler_v7_interactieve_kleuren"
+        return "boom_styler_v8_interactieve_kleuren"
 
     def displayName(self):
-        return self.tr("Categorisatie")
+        return self.tr(f"Categorisatie v{SCRIPT_VERSION}")
 
     def group(self):
         return self.tr("")
 
     def groupId(self):
         return ""
+
+    def shortHelpString(self):
+        return self.tr(
+            f"Versie: {SCRIPT_VERSION}\n\n"
+            "Categoriseert een laag op basis van een gekozen veld.\n"
+            "Toont unieke waardes met aantallen en kleurkeuze.\n"
+            "Ondersteunt vaste kleuren, paletten en handmatige kleurcorrecties."
+        )
 
     def flags(self):
         return super().flags() | QgsProcessingAlgorithm.FlagNoThreading
@@ -350,6 +360,7 @@ class BoomstylerFinalAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
+        feedback.pushInfo(f"Categorisatie v{SCRIPT_VERSION} gestart.")
         input_layer = self.parameterAsVectorLayer(parameters, "INPUT", context)
         veldnaam = self.parameterAsString(parameters, "CATEGORIEVELD", context)
         stijl_index = self.parameterAsInt(parameters, "STIJL", context)

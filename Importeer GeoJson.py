@@ -28,6 +28,8 @@ from qgis.core import (
 )
 from qgis.PyQt.QtGui import QColor
 
+SCRIPT_VERSION = "1.4"
+
 
 def parse_coordinate_value(value):
     if isinstance(value, (int, float)):
@@ -126,10 +128,10 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
     OUTPUT_GPKG = "OUTPUT_GPKG"
 
     def name(self) -> str:
-        return "excel_to_bomen_gpkg"
+        return "importeer_geojson_v14"
 
     def displayName(self) -> str:
-        return "Importeer GeoJSON"
+        return f"Importeer GeoJSON v{SCRIPT_VERSION}"
 
     def group(self) -> str:
         return ""
@@ -138,7 +140,13 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
         return ""
 
     def shortHelpString(self) -> str:
-        return "Converteer GeoJSON naar GeoPackage"
+        return (
+            f"Versie: {SCRIPT_VERSION}\n\n"
+            "Converteert GeoJSON naar GeoPackage.\n"
+            "Normaliseert coördinaatnotatie zoals 99,659.286 en 99659,286.\n"
+            "Herkent RD-coördinaten en zet CRS op EPSG:28992.\n"
+            "Hernoemt een bronveld fid naar bron_fid om GeoPackage-conflicten te voorkomen."
+        )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
         self.addParameter(
@@ -160,6 +168,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters: dict[str, Any], context: QgsProcessingContext, feedback: QgsProcessingFeedback) -> dict[str, Any]:
+        feedback.pushInfo(f"Importeer GeoJSON v{SCRIPT_VERSION} gestart.")
         input_path = self.parameterAsFile(parameters, self.INPUT_FILE, context)
         raw_output = parameters.get(self.OUTPUT_GPKG)
 
