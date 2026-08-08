@@ -1,4 +1,6 @@
+import json
 import os
+import tempfile
 from datetime import datetime
 from typing import Any, Optional
 from qgis.core import (
@@ -9,6 +11,7 @@ from qgis.core import (
     QgsProcessingParameterFile,
     QgsProcessingParameterFileDestination,
     QgsFeature,
+    QgsCoordinateReferenceSystem,
     QgsField,
     QgsVectorLayer,
     QgsVectorFileWriter,
@@ -24,6 +27,99 @@ from qgis.core import (
     Qgis  
 )
 from qgis.PyQt.QtGui import QColor
+
+
+def parse_coordinate_value(value):
+    if isinstance(value, (int, float)):
+        return value, False
+    if not isinstance(value, str):
+        return value, False
+
+    text = value.strip().replace(" ", "")
+    if not text:
+        return value, False
+
+    if "," in text and "." in text:
+        if text.rfind(",") < text.rfind("."):
+            normalized = text.replace(",", "")
+        else:
+            normalized = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        normalized = text.replace(",", ".")
+    else:
+        normalized = text
+
+    try:
+        return float(normalized), True
+    except ValueError:
+        return value, False
+
+
+def normalize_geojson_coordinates(coordinates):
+    if not isinstance(coordinates, list):
+        return coordinates, 0
+
+    if len(coordinates) >= 2 and not isinstance(coordinates[0], list) and not isinstance(coordinates[1], list):
+        normalized = []
+        changes = 0
+        for value in coordinates:
+            parsed, changed = parse_coordinate_value(value)
+            normalized.append(parsed)
+            if changed:
+                changes += 1
+        return normalized, changes
+
+    normalized = []
+    changes = 0
+    for part in coordinates:
+        normalized_part, part_changes = normalize_geojson_coordinates(part)
+        normalized.append(normalized_part)
+        changes += part_changes
+    return normalized, changes
+
+
+def create_normalized_geojson(input_path, feedback):
+    try:
+        with open(input_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        return input_path, None
+
+    total_changes = 0
+    features = data.get("features", []) if isinstance(data, dict) else []
+    for feature in features:
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if not geometry or "coordinates" not in geometry:
+            continue
+        geometry["coordinates"], changes = normalize_geojson_coordinates(geometry["coordinates"])
+        total_changes += changes
+
+    if total_changes == 0:
+        return input_path, None
+
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".geojson",
+        prefix="qgis_import_normalized_",
+        delete=False,
+    )
+    with temp_file:
+        json.dump(data, temp_file, ensure_ascii=False)
+
+    feedback.pushInfo(f"{total_changes} coördinaatwaardes genormaliseerd voor import.")
+    return temp_file.name, temp_file.name
+
+
+def layer_looks_like_rd(layer):
+    extent = layer.extent()
+    if extent.isEmpty():
+        return False
+
+    center_x = (extent.xMinimum() + extent.xMaximum()) / 2
+    center_y = (extent.yMinimum() + extent.yMaximum()) / 2
+    return 0 <= center_x <= 300000 and 300000 <= center_y <= 620000
+
 
 class BomenConverterAlgorithm(QgsProcessingAlgorithm):
     INPUT_FILE = "INPUT_FILE"
@@ -77,13 +173,23 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             base_path, ext = os.path.splitext(user_path)
             output_path = f"{base_path}_{timestamp}{ext}"
 
-        # 1. Load the GeoJSON
-        vlayer = QgsVectorLayer(input_path, "Temp_Import", "ogr")
+        # 1. Normalize coordinate notation before loading the GeoJSON.
+        # Supports English notation (99,659.286) and Dutch notation (99659,286).
+        normalized_input_path, temp_input_path = create_normalized_geojson(input_path, feedback)
+
+        # 2. Load the GeoJSON
+        vlayer = QgsVectorLayer(normalized_input_path, "Temp_Import", "ogr")
         if not vlayer.isValid():
+            if temp_input_path:
+                os.remove(temp_input_path)
             feedback.reportError("Could not load the GeoJSON file!")
             return {self.OUTPUT_GPKG: output_path}
 
-        # 2. Rename source field "fid" before GeoPackage export.
+        if layer_looks_like_rd(vlayer):
+            vlayer.setCrs(QgsCoordinateReferenceSystem("EPSG:28992"))
+            feedback.pushInfo("Coördinaten lijken op RD New. CRS ingesteld op EPSG:28992 zonder transformatie.")
+
+        # 3. Rename source field "fid" before GeoPackage export.
         # GeoPackage/OGR reserves fid for its internal numeric feature id.
         export_layer = vlayer
         field_names = vlayer.fields().names()
@@ -122,7 +228,7 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
             provider.addFeatures(new_features)
             feedback.pushInfo(f'Veld "fid" hernoemd naar "{safe_fid_name}" om GeoPackage-export mogelijk te maken.')
 
-        # 3. Setup Save Options
+        # 4. Setup Save Options
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "GPKG"
         options.layerName = "Bomen" 
@@ -130,10 +236,12 @@ class BomenConverterAlgorithm(QgsProcessingAlgorithm):
         
         transform_context = QgsProject.instance().transformContext()
         
-        # 4. Write Permanent GeoPackage
+        # 5. Write Permanent GeoPackage
         error_code, error_msg, _, _ = QgsVectorFileWriter.writeAsVectorFormatV3(
             export_layer, output_path, transform_context, options
         )
+        if temp_input_path:
+            os.remove(temp_input_path)
 
         if error_code == QgsVectorFileWriter.NoError:
             final_layer = QgsVectorLayer(output_path, "Bomen", "ogr")
